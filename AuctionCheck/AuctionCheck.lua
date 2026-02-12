@@ -4,6 +4,7 @@ local PREFIX = "|cff33ff99AuctionCheck|r"
 local frame = CreateFrame("Frame")
 local auctionSoldPattern = nil
 local auctionSoldPrefix = nil
+local mailooked = false
 
 local function Chat(msg)
     if DEFAULT_CHAT_FRAME then
@@ -129,7 +130,6 @@ local function ShowMailTooltip(self)
     end
 
     GameTooltip:SetOwner(self, anchor)
-    GameTooltip:ClearLines()
     GameTooltip:AddLine("AuctionCheck")
 
     local sold = AuctionCheckDB.sold
@@ -168,32 +168,33 @@ local function HideMailTooltip()
 end
 
 local function TryHookMailFrame()
+    if mailHooked then
+        return
+    end
+
     local mailFrame = MiniMapMailFrame
     if not mailFrame then
         return
     end
 
-    if mailFrame.AuctionCheckTooltipHooked then
-        return
-    end
+    local oldEnter = mailFrame:GetScript("OnEnter")
+    local oldLeave = mailFrame:GetScript("OnLeave")
 
-    if mailFrame.HookScript then
-        mailFrame:HookScript("OnEnter", function(self)
-            ShowMailTooltip(self)
-        end)
-        mailFrame:HookScript("OnLeave", function()
-            HideMailTooltip()
-        end)
-    else
-        mailFrame:SetScript("OnEnter", function(self)
-            ShowMailTooltip(self)
-        end)
-        mailFrame:SetScript("OnLeave", function()
-            HideMailTooltip()
-        end)
-    end
+    mailFrame:SetScript("OnEnter", function(self)
+        if oldEnter then
+            oldEnter(self)
+        end
+        ShowMailTooltip(self)
+    end)
 
-    mailFrame.AuctionCheckTooltipHooked = 1
+    mailFrame:SetScript("OnLeave", function(self)
+        HideMailTooltip()
+        if oldLeave then
+            oldLeave(self)
+        end
+    end)
+
+    mailHooked = true
 end
 
 SlashCmdList["AUCTIONCHECK"] = function(msg)
