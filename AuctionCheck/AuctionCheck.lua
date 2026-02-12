@@ -4,7 +4,7 @@ local PREFIX = "|cff33ff99AuctionCheck|r"
 local frame = CreateFrame("Frame")
 local auctionSoldPattern = nil
 local auctionSoldPrefix = nil
-local mailHooked = false
+local mailooked = false
 
 local function Chat(msg)
     if DEFAULT_CHAT_FRAME then
