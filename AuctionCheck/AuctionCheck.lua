@@ -20,6 +20,38 @@ local function EnsureDB()
     if not AuctionCheckDB.sold then
         AuctionCheckDB.sold = {}
     end
+
+    local sold = AuctionCheckDB.sold
+    if table.getn(sold) > 0 then
+        local first = sold[1]
+        if first and (first.t or first.msg or not first.count) then
+            local rebuilt = {}
+            local i
+            for i = 1, table.getn(sold) do
+                local entry = sold[i]
+                local label = entry.item
+                if not label or label == "" then
+                    label = entry.msg or "(unknown sale)"
+                end
+
+                local j
+                local found = nil
+                for j = 1, table.getn(rebuilt) do
+                    if rebuilt[j].item == label then
+                        found = rebuilt[j]
+                        break
+                    end
+                end
+
+                if found then
+                    found.count = found.count + (entry.count or 1)
+                else
+                    table.insert(rebuilt, { item = label, count = entry.count or 1 })
+                end
+            end
+            AuctionCheckDB.sold = rebuilt
+        end
+    end
 end
 
 local function EscapePattern(s)
@@ -74,10 +106,31 @@ end
 
 local function AddSoldMessage(msg, item)
     EnsureDB()
-    table.insert(AuctionCheckDB.sold, {
-        t = time(),
-        item = item,
-        msg = msg,
+
+    local label = item
+    if not label or label == "" then
+        label = msg or "(unknown sale)"
+    end
+
+    local sold = AuctionCheckDB.sold
+    local i
+    for i = 1, table.getn(sold) do
+        local entry = sold[i]
+        local existingLabel = entry.item
+        if (not existingLabel or existingLabel == "") and entry.msg then
+            existingLabel = entry.msg
+            entry.item = existingLabel
+        end
+
+        if existingLabel == label then
+            entry.count = (entry.count or 1) + 1
+            return
+        end
+    end
+
+    table.insert(sold, {
+        item = label,
+        count = 1,
     })
 end
 
@@ -87,16 +140,6 @@ local function ClearSold(reason)
     if reason then
         Chat(reason)
     end
-end
-
-local function FormatClock(ts)
-    local value = ts or time()
-    return date("%H:%M", value)
-end
-
-local function FormatDateTime(ts)
-    local value = ts or time()
-    return date("%Y-%m-%d %H:%M:%S", value)
 end
 
 local function ShowStoredSales()
@@ -113,12 +156,9 @@ local function ShowStoredSales()
     local i
     for i = 1, count do
         local entry = sold[i]
-        local whenText = FormatDateTime(entry.t)
-        if entry.item and entry.item ~= "" then
-            Chat(whenText .. " - " .. entry.item)
-        else
-            Chat(whenText .. " - " .. (entry.msg or "(no message)"))
-        end
+        local text = entry.item or entry.msg or "(unknown sale)"
+        local qty = entry.count or 1
+        Chat(qty .. "x " .. text)
     end
 end
 
@@ -159,8 +199,9 @@ local function ShowMailTooltip(owner)
     local i
     for i = startIndex, count do
         local entry = sold[i]
-        local text = entry.item and entry.item ~= "" and entry.item or (entry.msg or "(no message)")
-        GameTooltip:AddLine(FormatClock(entry.t) .. " - " .. text, 0.9, 0.9, 0.9, 1)
+        local text = entry.item or entry.msg or "(unknown sale)"
+        local qty = entry.count or 1
+        GameTooltip:AddLine(qty .. "x " .. text, 0.9, 0.9, 0.9, 1)
     end
 
     if count > maxLines then
