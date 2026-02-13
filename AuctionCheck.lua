@@ -7,6 +7,8 @@ local subjectMatchers = {}
 local subjectFallbacks = {}
 local mailOnEnterHandler = nil
 local mailOnLeaveHandler = nil
+local originalTooltipHeaderFont = nil
+local firstTooltipLineColorSet = false
 
 local function Chat(msg)
     if DEFAULT_CHAT_FRAME then
@@ -277,6 +279,59 @@ local function ShowStoredData()
     ShowBucket("AH Returned", AuctionCheckDB.returned)
 end
 
+local function ApplyTooltipFirstLineColor(r, g, b)
+    if firstTooltipLineColorSet then
+        return
+    end
+
+    local headerLine = _G and _G["GameTooltipTextLeft1"]
+    if not headerLine or not headerLine.SetTextColor then
+        return
+    end
+
+    headerLine:SetTextColor(r or 0.9, g or 0.9, b or 0.9)
+    firstTooltipLineColorSet = true
+end
+
+local function UseBodyFontForTooltipHeader()
+    local headerLine = _G and _G["GameTooltipTextLeft1"]
+    if not headerLine or not headerLine.GetFontObject then
+        return
+    end
+
+    if not originalTooltipHeaderFont then
+        originalTooltipHeaderFont = headerLine:GetFontObject()
+    end
+
+    local referenceLine = _G and _G["GameTooltipTextLeft2"]
+    if referenceLine and referenceLine.GetFontObject then
+        local fontObject = referenceLine:GetFontObject()
+        if fontObject then
+            headerLine:SetFontObject(fontObject)
+            return
+        end
+    end
+
+    if GameTooltipText then
+        headerLine:SetFontObject(GameTooltipText)
+    elseif GameFontNormal then
+        headerLine:SetFontObject(GameFontNormal)
+    end
+end
+
+local function RestoreTooltipHeaderFont()
+    if not originalTooltipHeaderFont then
+        return
+    end
+
+    local headerLine = _G and _G["GameTooltipTextLeft1"]
+    if headerLine and headerLine.SetFontObject then
+        headerLine:SetFontObject(originalTooltipHeaderFont)
+    end
+
+    originalTooltipHeaderFont = nil
+end
+
 local function AddTooltipSection(title, bucket, r, g, b, maxLines)
     local colorR = r or 0.9
     local colorG = g or 0.9
@@ -298,6 +353,10 @@ local function AddTooltipSection(title, bucket, r, g, b, maxLines)
         end
     end
 
+    if shown > 0 then
+        ApplyTooltipFirstLineColor(colorR, colorG, colorB)
+    end
+
     if count > shown then
         GameTooltip:AddLine("...", colorR * 0.75, colorG * 0.75, colorB * 0.75)
     end
@@ -316,6 +375,8 @@ local function ShowMailTooltip(owner)
         return
     end
 
+    firstTooltipLineColorSet = false
+
     GameTooltip:SetOwner(owner, "ANCHOR_BOTTOMLEFT")
     GameTooltip:ClearLines()
 
@@ -324,9 +385,12 @@ local function ShowMailTooltip(owner)
     AddTooltipSection("AH Returned", AuctionCheckDB.returned, 0.9, 0.45, 0.45, 3)
 
     GameTooltip:Show()
+    UseBodyFontForTooltipHeader()
 end
 
 local function HideMailTooltip()
+    firstTooltipLineColorSet = false
+    RestoreTooltipHeaderFont()
     GameTooltip:Hide()
 end
 
