@@ -277,8 +277,40 @@ local function ShowStoredData()
     ShowBucket("AH Returned", AuctionCheckDB.returned)
 end
 
-local function AddTooltipSection(title, bucket, r, g, b, maxLines)
-    GameTooltip:AddLine(title, r, g, b)
+local function BuildSeparatorLine(length, char)
+    local fillChar = char or "_"
+    length = length or 30
+    if length < 1 then
+        length = 1
+    end
+    local i
+    local buffer = {}
+    for i = 1, length do
+        buffer[i] = fillChar
+    end
+    return table.concat(buffer)
+end
+
+local function AddTooltipSeparator(r, g, b, separatorChar)
+    GameTooltip:AddLine(BuildSeparatorLine(32, separatorChar or "_"), r, g, b)
+
+    local lineIndex = GameTooltip:NumLines()
+    local fontString = _G["GameTooltipTextLeft" .. lineIndex]
+    if fontString then
+        if GameTooltipTextSmall then
+            fontString:SetFontObject(GameTooltipTextSmall)
+        end
+        if fontString.SetSpacing then
+            fontString:SetSpacing(0)
+        end
+        if fontString.SetTextColor then
+            fontString:SetTextColor(r or 1, g or 1, b or 1)
+        end
+    end
+end
+
+local function AddTooltipSection(title, bucket, r, g, b, maxLines, separatorChar)
+    AddTooltipSeparator(r, g, b, separatorChar)
 
     local count = table.getn(bucket)
     if count == 0 then
@@ -319,9 +351,9 @@ local function ShowMailTooltip(owner)
     GameTooltip:ClearLines()
     GameTooltip:AddLine("AuctionCheck")
 
-    AddTooltipSection("AH Sold", AuctionCheckDB.sold, 1, 0.85, 0.3, 3)
-    AddTooltipSection("AH Won", AuctionCheckDB.won, 0.4, 1, 0.4, 3)
-    AddTooltipSection("AH Returned", AuctionCheckDB.returned, 1, 0.4, 0.4, 3)
+    AddTooltipSection("AH Sold", AuctionCheckDB.sold, 0.95, 0.75, 0.35, 3, "_")
+    AddTooltipSection("AH Won", AuctionCheckDB.won, 0.35, 0.85, 0.45, 3, "_")
+    AddTooltipSection("AH Returned", AuctionCheckDB.returned, 0.9, 0.45, 0.45, 3, "_")
 
     GameTooltip:Show()
 end
