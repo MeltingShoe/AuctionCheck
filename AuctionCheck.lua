@@ -304,12 +304,41 @@ local function AddTooltipSection(title, bucket, r, g, b, maxLines)
     return shown + 1
 end
 
-local function ShowMailTooltip(owner)
+local function ShowStoredData()
     EnsureDB()
+    ShowBucket("AH Sold", AuctionCheckDB.sold)
+    ShowBucket("AH Won", AuctionCheckDB.won)
+    ShowBucket("AH Returned", AuctionCheckDB.returned)
+    ShowSenders()
+end
 
-    if not owner then
-        owner = MiniMapMailFrame
+local function AddTooltipSection(title, bucket, r, g, b, maxLines)
+    GameTooltip:AddLine(title, r, g, b)
+
+    local count = table.getn(bucket)
+    if count == 0 then
+        GameTooltip:AddLine("None", 0.7, 0.7, 0.7)
+        return 1
     end
+
+    local shown = 0
+    local i
+    for i = 1, count do
+        local entry = bucket[i]
+        GameTooltip:AddLine((entry.count or 1) .. "x " .. (entry.item or "(unknown)"), 0.9, 0.9, 0.9)
+        shown = shown + 1
+        if shown >= maxLines then
+            break
+        end
+    end
+
+    GameTooltip:SetOwner(owner, "ANCHOR_BOTTOMLEFT")
+    GameTooltip:ClearLines()
+    GameTooltip:AddLine("AuctionCheck")
+
+    AddTooltipSection("AH Sold", AuctionCheckDB.sold, 1, 0.85, 0.3, 3)
+    AddTooltipSection("AH Won", AuctionCheckDB.won, 0.4, 1, 0.4, 3)
+    AddTooltipSection("AH Returned", AuctionCheckDB.returned, 1, 0.4, 0.4, 3)
 
     if not owner then
         return
@@ -322,6 +351,7 @@ local function ShowMailTooltip(owner)
     AddTooltipSection("AH Sold", AuctionCheckDB.sold, 1, 0.85, 0.3, 3)
     AddTooltipSection("AH Won", AuctionCheckDB.won, 0.4, 1, 0.4, 3)
     AddTooltipSection("AH Returned", AuctionCheckDB.returned, 1, 0.4, 0.4, 3)
+    AddSenderSection(3)
 
     GameTooltip:Show()
 end
