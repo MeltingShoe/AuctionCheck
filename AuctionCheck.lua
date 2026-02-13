@@ -28,6 +28,7 @@ local function EnsureDB()
     EnsureBucket(AuctionCheckDB, "sold")
     EnsureBucket(AuctionCheckDB, "won")
     EnsureBucket(AuctionCheckDB, "returned")
+    EnsureBucket(AuctionCheckDB, "senders")
 end
 
 local function EscapePattern(s)
@@ -167,6 +168,27 @@ local function AddEntry(bucket, label, amount)
     end
 end
 
+local function AddSender(sender)
+    if not sender or sender == "" then
+        return
+    end
+
+    local bucket = AuctionCheckDB.senders
+    local i
+    for i = 1, table.getn(bucket) do
+        local entry = bucket[i]
+        if entry.name == sender then
+            entry.count = (entry.count or 0) + 1
+            return
+        end
+    end
+
+    table.insert(bucket, {
+        name = sender,
+        count = 1,
+    })
+end
+
 local function NormalizeSubjectToItem(kind, subject)
     local matchers = subjectMatchers[kind]
     if not matchers then
@@ -225,10 +247,11 @@ local function ScanMailbox()
     local sold = {}
     local won = {}
     local returned = {}
+    local senders = {}
 
     local i
     for i = 1, numItems do
-        local _, _, _, subject = GetInboxHeaderInfo(i)
+        local _, _, sender, subject = GetInboxHeaderInfo(i)
         local kind = ClassifyAuctionSubject(subject)
 
         if kind == "sold" then
@@ -237,12 +260,29 @@ local function ScanMailbox()
             AddEntry(won, NormalizeSubjectToItem("won", subject), 1)
         elseif kind == "returned" then
             AddEntry(returned, NormalizeSubjectToItem("returned", subject), 1)
+        else
+            if sender and sender ~= "" then
+                local j
+                local found = nil
+                for j = 1, table.getn(senders) do
+                    if senders[j].name == sender then
+                        found = senders[j]
+                        break
+                    end
+                end
+                if found then
+                    found.count = found.count + 1
+                else
+                    table.insert(senders, { name = sender, count = 1 })
+                end
+            end
         end
     end
 
     AuctionCheckDB.sold = sold
     AuctionCheckDB.won = won
     AuctionCheckDB.returned = returned
+    AuctionCheckDB.senders = senders
 end
 
 local function ClearAll(reason)
@@ -250,6 +290,7 @@ local function ClearAll(reason)
     AuctionCheckDB.sold = {}
     AuctionCheckDB.won = {}
     AuctionCheckDB.returned = {}
+    AuctionCheckDB.senders = {}
     if reason then
         Chat(reason)
     end
@@ -270,38 +311,20 @@ local function ShowBucket(title, bucket)
     end
 end
 
-local function ShowStoredData()
-    EnsureDB()
-    ShowBucket("AH Sold", AuctionCheckDB.sold)
-    ShowBucket("AH Won", AuctionCheckDB.won)
-    ShowBucket("AH Returned", AuctionCheckDB.returned)
-end
-
-local function AddTooltipSection(title, bucket, r, g, b, maxLines)
-    GameTooltip:AddLine(title, r, g, b)
-
-    local count = table.getn(bucket)
+local function ShowSenders()
+    local senders = AuctionCheckDB.senders
+    local count = table.getn(senders)
     if count == 0 then
-        GameTooltip:AddLine("None", 0.7, 0.7, 0.7)
-        return 1
+        Chat("Recent player senders: none")
+        return
     end
 
-    local shown = 0
+    Chat("Recent player senders:")
     local i
     for i = 1, count do
-        local entry = bucket[i]
-        GameTooltip:AddLine((entry.count or 1) .. "x " .. (entry.item or "(unknown)"), 0.9, 0.9, 0.9)
-        shown = shown + 1
-        if shown >= maxLines then
-            break
-        end
+        local entry = senders[i]
+        Chat("  " .. (entry.count or 1) .. "x " .. (entry.name or "(unknown)"))
     end
-
-    if count > shown then
-        GameTooltip:AddLine("...", 0.6, 0.6, 0.6)
-    end
-
-    return shown + 1
 end
 
 local function ShowStoredData()
@@ -332,13 +355,45 @@ local function AddTooltipSection(title, bucket, r, g, b, maxLines)
         end
     end
 
-    GameTooltip:SetOwner(owner, "ANCHOR_BOTTOMLEFT")
-    GameTooltip:ClearLines()
-    GameTooltip:AddLine("AuctionCheck")
+    if count > shown then
+        GameTooltip:AddLine("...", 0.6, 0.6, 0.6)
+    end
 
-    AddTooltipSection("AH Sold", AuctionCheckDB.sold, 1, 0.85, 0.3, 3)
-    AddTooltipSection("AH Won", AuctionCheckDB.won, 0.4, 1, 0.4, 3)
-    AddTooltipSection("AH Returned", AuctionCheckDB.returned, 1, 0.4, 0.4, 3)
+    return shown + 1
+end
+
+local function AddSenderSection(maxLines)
+    local senders = AuctionCheckDB.senders
+    GameTooltip:AddLine("Player Senders", 0.8, 0.9, 1)
+
+    local count = table.getn(senders)
+    if count == 0 then
+        GameTooltip:AddLine("None", 0.7, 0.7, 0.7)
+        return
+    end
+
+    local shown = 0
+    local i
+    for i = 1, count do
+        local entry = senders[i]
+        GameTooltip:AddLine((entry.count or 1) .. "x " .. (entry.name or "(unknown)"), 0.9, 0.9, 0.9)
+        shown = shown + 1
+        if shown >= maxLines then
+            break
+        end
+    end
+
+    if count > shown then
+        GameTooltip:AddLine("...", 0.6, 0.6, 0.6)
+    end
+end
+
+local function ShowMailTooltip(owner)
+    EnsureDB()
+
+    if not owner then
+        owner = MiniMapMailFrame
+    end
 
     if not owner then
         return
@@ -411,7 +466,7 @@ SlashCmdList["AUCTIONCHECK"] = function(msg)
     if cmd == "" then
         ShowStoredData()
     elseif cmd == "clear" then
-        ClearAll("Cleared stored auction data.")
+        ClearAll("Cleared stored auction and sender data.")
     elseif cmd == "debug" then
         local soldFmt = ERR_AUCTION_SOLD_S or "(nil)"
         local wonFmt = ERR_AUCTION_WON_S or "(nil)"
