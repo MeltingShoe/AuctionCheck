@@ -10,6 +10,6 @@ Tiny Turtle WoW addon that tracks auction/mail activity and shows recent entries
 3. Reload UI or relog.
 
 ## Command
-- `/auctioncheck` — print stored AH sold/won/returned and player sender entries.
+- `/auctioncheck` — print stored AH sold/won/returned entries.
 - `/auctioncheck scan` — rescan current mailbox headers.
 - `/auctioncheck clear` — clear stored data.
