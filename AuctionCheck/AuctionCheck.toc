@@ -1,8 +1,0 @@
-## Interface: 11200
-## Title: AuctionCheck
-## Notes: Tracks auction sold system messages per character.
-## Version: 0.1
-## Author: Rachel
-## SavedVariablesPerCharacter: AuctionCheckDB
-
-AuctionCheck.lua
