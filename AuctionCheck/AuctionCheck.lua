@@ -4,7 +4,8 @@ local PREFIX = "|cff33ff99AuctionCheck|r"
 local frame = CreateFrame("Frame")
 local auctionSoldPattern = nil
 local auctionSoldPrefix = nil
-local mailooked = false
+local mailOnEnterHandler = nil
+local mailOnLeaveHandler = nil
 
 local function Chat(msg)
     if DEFAULT_CHAT_FRAME then
@@ -121,15 +122,21 @@ local function ShowStoredSales()
     end
 end
 
-local function ShowMailTooltip(self)
+local function ShowMailTooltip(owner)
     EnsureDB()
 
-    local anchor = "ANCHOR_LEFT"
-    if self then
-        anchor = "ANCHOR_BOTTOMLEFT"
+    if not owner then
+        owner = MiniMapMailFrame
     end
 
-    GameTooltip:SetOwner(self, anchor)
+    if not owner then
+        return
+    end
+
+    local anchor = "ANCHOR_BOTTOMLEFT"
+
+    GameTooltip:SetOwner(owner, anchor)
+    GameTooltip:ClearLines()
     GameTooltip:AddLine("AuctionCheck")
 
     local sold = AuctionCheckDB.sold
@@ -168,33 +175,44 @@ local function HideMailTooltip()
 end
 
 local function TryHookMailFrame()
-    if mailHooked then
-        return
-    end
-
     local mailFrame = MiniMapMailFrame
     if not mailFrame then
         return
     end
 
-    local oldEnter = mailFrame:GetScript("OnEnter")
-    local oldLeave = mailFrame:GetScript("OnLeave")
+    if mailFrame.AuctionCheckTooltipHooked then
+        return
+    end
 
-    mailFrame:SetScript("OnEnter", function(self)
-        if oldEnter then
-            oldEnter(self)
-        end
-        ShowMailTooltip(self)
-    end)
+    mailOnEnterHandler = function(self)
+        local owner = self or this or MiniMapMailFrame
+        ShowMailTooltip(owner)
+    end
 
-    mailFrame:SetScript("OnLeave", function(self)
+    mailOnLeaveHandler = function()
         HideMailTooltip()
-        if oldLeave then
-            oldLeave(self)
-        end
-    end)
+    end
 
-    mailHooked = true
+    mailFrame:SetScript("OnEnter", mailOnEnterHandler)
+    mailFrame:SetScript("OnLeave", mailOnLeaveHandler)
+
+    mailFrame.AuctionCheckTooltipHooked = 1
+end
+
+local function DebugMailTooltipState()
+    local mailFrame = MiniMapMailFrame
+    if not mailFrame then
+        Chat("MiniMapMailFrame: nil")
+        return
+    end
+
+    local enterScript = mailFrame:GetScript("OnEnter")
+    local leaveScript = mailFrame:GetScript("OnLeave")
+
+    Chat("MiniMapMailFrame exists; shown=" .. (mailFrame:IsShown() and "1" or "0") .. ", visible=" .. (mailFrame:IsVisible() and "1" or "0"))
+    Chat("Hooked flag: " .. (mailFrame.AuctionCheckTooltipHooked and "1" or "0"))
+    Chat("OnEnter is ours: " .. ((enterScript == mailOnEnterHandler) and "1" or "0"))
+    Chat("OnLeave is ours: " .. ((leaveScript == mailOnLeaveHandler) and "1" or "0"))
 end
 
 SlashCmdList["AUCTIONCHECK"] = function(msg)
@@ -213,8 +231,11 @@ SlashCmdList["AUCTIONCHECK"] = function(msg)
         local pat = auctionSoldPattern or "(nil)"
         Chat("ERR_AUCTION_SOLD_S: " .. fmt)
         Chat("Pattern: " .. pat)
+    elseif cmd == "debugmail" then
+        TryHookMailFrame()
+        DebugMailTooltipState()
     else
-        Chat("Usage: /auctioncheck [clear|debug]")
+        Chat("Usage: /auctioncheck [clear|debug|debugmail]")
     end
 end
 SLASH_AUCTIONCHECK1 = "/auctioncheck"
