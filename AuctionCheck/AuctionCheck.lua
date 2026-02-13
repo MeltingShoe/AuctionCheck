@@ -147,7 +147,6 @@ local function ShowStoredSales()
     local sold = AuctionCheckDB.sold
     local count = table.getn(sold)
 
-    Chat("Stored auction sales: " .. count .. " (oldest -> newest)")
     if count == 0 then
         Chat("No stored auction sales.")
         return
@@ -187,8 +186,6 @@ local function ShowMailTooltip(owner)
         GameTooltip:Show()
         return
     end
-
-    GameTooltip:AddLine("Stored sales: " .. count, 1, 1, 1)
 
     local maxLines = 10
     local startIndex = count - maxLines + 1
