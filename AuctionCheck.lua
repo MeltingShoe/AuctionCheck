@@ -2,8 +2,9 @@ local ADDON_NAME = "AuctionCheck"
 local PREFIX = "|cff33ff99AuctionCheck|r"
 
 local frame = CreateFrame("Frame")
-local auctionSoldPattern = nil
-local auctionSoldPrefix = nil
+local systemPatterns = {}
+local subjectMatchers = {}
+local subjectFallbacks = {}
 local mailOnEnterHandler = nil
 local mailOnLeaveHandler = nil
 
@@ -13,45 +14,21 @@ local function Chat(msg)
     end
 end
 
+local function EnsureBucket(tbl, key)
+    if not tbl[key] then
+        tbl[key] = {}
+    end
+end
+
 local function EnsureDB()
     if not AuctionCheckDB then
-        AuctionCheckDB = { sold = {} }
-    end
-    if not AuctionCheckDB.sold then
-        AuctionCheckDB.sold = {}
+        AuctionCheckDB = {}
     end
 
-    local sold = AuctionCheckDB.sold
-    if table.getn(sold) > 0 then
-        local first = sold[1]
-        if first and (first.t or first.msg or not first.count) then
-            local rebuilt = {}
-            local i
-            for i = 1, table.getn(sold) do
-                local entry = sold[i]
-                local label = entry.item
-                if not label or label == "" then
-                    label = entry.msg or "(unknown sale)"
-                end
-
-                local j
-                local found = nil
-                for j = 1, table.getn(rebuilt) do
-                    if rebuilt[j].item == label then
-                        found = rebuilt[j]
-                        break
-                    end
-                end
-
-                if found then
-                    found.count = found.count + (entry.count or 1)
-                else
-                    table.insert(rebuilt, { item = label, count = entry.count or 1 })
-                end
-            end
-            AuctionCheckDB.sold = rebuilt
-        end
-    end
+    EnsureBucket(AuctionCheckDB, "sold")
+    EnsureBucket(AuctionCheckDB, "won")
+    EnsureBucket(AuctionCheckDB, "returned")
+    EnsureBucket(AuctionCheckDB, "senders")
 end
 
 local function EscapePattern(s)
@@ -61,103 +38,353 @@ local function EscapePattern(s)
     return string.gsub(s, "([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
 end
 
-local function BuildAuctionSoldPattern()
-    auctionSoldPattern = nil
-    auctionSoldPrefix = nil
-
-    if type(ERR_AUCTION_SOLD_S) == "string" and ERR_AUCTION_SOLD_S ~= "" then
-        local escaped = EscapePattern(ERR_AUCTION_SOLD_S)
-        local withCapture = string.gsub(escaped, "%%%%s", "(.+)")
-        auctionSoldPattern = "^" .. withCapture .. "$"
-        auctionSoldPrefix = string.gsub(ERR_AUCTION_SOLD_S, "%%s.*$", "")
+local function BuildFormatPattern(fmt)
+    if type(fmt) ~= "string" or fmt == "" then
+        return nil
     end
+
+    local escaped = EscapePattern(fmt)
+    local pattern = string.gsub(escaped, "%%%%s", "(.+)")
+    pattern = string.gsub(pattern, "%%%%d", "(%%d+)")
+    return "^" .. pattern .. "$"
 end
 
-local function IsAuctionSoldMessage(msg)
+local function AddMatcher(list, fmt)
+    if type(fmt) ~= "string" or fmt == "" then
+        return
+    end
+
+    local matcher = {
+        format = fmt,
+        pattern = BuildFormatPattern(fmt),
+    }
+    table.insert(list, matcher)
+end
+
+local function BuildPatterns()
+    systemPatterns = {
+        sold = {},
+        won = {},
+    }
+
+    AddMatcher(systemPatterns.sold, ERR_AUCTION_SOLD_S)
+    AddMatcher(systemPatterns.won, ERR_AUCTION_WON_S)
+
+    subjectMatchers = {
+        sold = {},
+        won = {},
+        returned = {},
+    }
+
+    AddMatcher(subjectMatchers.sold, AUCTION_SOLD_MAIL_SUBJECT)
+    AddMatcher(subjectMatchers.won, AUCTION_WON_MAIL_SUBJECT)
+    AddMatcher(subjectMatchers.returned, AUCTION_EXPIRED_MAIL_SUBJECT)
+    AddMatcher(subjectMatchers.returned, AUCTION_REMOVED_MAIL_SUBJECT)
+
+    subjectFallbacks = {
+        sold = { "auction successful", "sold" },
+        won = { "auction won", "won" },
+        returned = { "auction expired", "expired", "cancelled", "canceled", "removed" },
+    }
+end
+
+local function MatchFromMatchers(msg, matchers)
     if type(msg) ~= "string" or msg == "" then
+        return nil
+    end
+
+    local i
+    for i = 1, table.getn(matchers) do
+        local matcher = matchers[i]
+        if matcher and matcher.pattern then
+            local captured = string.match(msg, matcher.pattern)
+            if captured then
+                return captured
+            end
+        end
+    end
+
+    return nil
+end
+
+local function IsAuctionSystemMessage(kind, msg)
+    local matchers = systemPatterns[kind]
+    if not matchers then
         return false, nil
     end
 
-    if auctionSoldPattern and auctionSoldPrefix and auctionSoldPrefix ~= "" then
-        if string.find(msg, auctionSoldPrefix, 1, 1) then
-            local item = string.match(msg, auctionSoldPattern)
-            if item then
-                return true, item
-            end
-        end
-    elseif auctionSoldPattern then
-        local item = string.match(msg, auctionSoldPattern)
-        if item then
-            return true, item
-        end
+    local captured = MatchFromMatchers(msg, matchers)
+    if captured then
+        return true, captured
     end
 
-    local lowerMsg = string.lower(msg)
-    if string.find(lowerMsg, "your auction of", 1, 1) and string.find(lowerMsg, "sold", 1, 1) then
-        local item = string.match(msg, "[Yy]our auction of%s+(.+)%s+[Hh]as sold")
-        if not item then
-            item = string.match(msg, "[Yy]our auction of%s+(.+)%s+[Ss]old")
+    local lowerMsg = string.lower(msg or "")
+    if kind == "sold" then
+        if string.find(lowerMsg, "your auction of", 1, 1) and string.find(lowerMsg, "sold", 1, 1) then
+            local item = string.match(msg, "[Yy]our auction of%s+(.+)%s+[Hh]as sold")
+            if not item then
+                item = string.match(msg, "[Yy]our auction of%s+(.+)%s+[Ss]old")
+            end
+            return true, item
         end
-        return true, item
+    elseif kind == "won" then
+        if string.find(lowerMsg, "won", 1, 1) and string.find(lowerMsg, "auction", 1, 1) then
+            local item = string.match(msg, "[Yy]ou have won an auction for%s+(.+)")
+            return true, item
+        end
     end
 
     return false, nil
 end
 
-local function AddSoldMessage(msg, item)
-    EnsureDB()
+local function FindEntryByLabel(bucket, label)
+    local i
+    for i = 1, table.getn(bucket) do
+        local entry = bucket[i]
+        if entry.item == label then
+            return entry
+        end
+    end
+    return nil
+end
 
-    local label = item
+local function AddEntry(bucket, label, amount)
     if not label or label == "" then
-        label = msg or "(unknown sale)"
+        label = "(unknown)"
     end
 
-    local sold = AuctionCheckDB.sold
-    local i
-    for i = 1, table.getn(sold) do
-        local entry = sold[i]
-        local existingLabel = entry.item
-        if (not existingLabel or existingLabel == "") and entry.msg then
-            existingLabel = entry.msg
-            entry.item = existingLabel
-        end
+    if not amount or amount < 1 then
+        amount = 1
+    end
 
-        if existingLabel == label then
-            entry.count = (entry.count or 1) + 1
+    local entry = FindEntryByLabel(bucket, label)
+    if entry then
+        entry.count = (entry.count or 0) + amount
+    else
+        table.insert(bucket, {
+            item = label,
+            count = amount,
+        })
+    end
+end
+
+local function AddSender(sender)
+    if not sender or sender == "" then
+        return
+    end
+
+    local bucket = AuctionCheckDB.senders
+    local i
+    for i = 1, table.getn(bucket) do
+        local entry = bucket[i]
+        if entry.name == sender then
+            entry.count = (entry.count or 0) + 1
             return
         end
     end
 
-    table.insert(sold, {
-        item = label,
+    table.insert(bucket, {
+        name = sender,
         count = 1,
     })
 end
 
-local function ClearSold(reason)
+local function NormalizeSubjectToItem(kind, subject)
+    local matchers = subjectMatchers[kind]
+    if not matchers then
+        return subject
+    end
+
+    local captured = MatchFromMatchers(subject, matchers)
+    if captured and captured ~= "" then
+        return captured
+    end
+
+    return subject
+end
+
+local function ClassifyAuctionSubject(subject)
+    if type(subject) ~= "string" or subject == "" then
+        return nil
+    end
+
+    local kinds = { "sold", "won", "returned" }
+    local i
+    for i = 1, table.getn(kinds) do
+        local kind = kinds[i]
+        if MatchFromMatchers(subject, subjectMatchers[kind]) then
+            return kind
+        end
+    end
+
+    local lowerSubject = string.lower(subject)
+    for i = 1, table.getn(kinds) do
+        local kind = kinds[i]
+        local words = subjectFallbacks[kind]
+        local j
+        for j = 1, table.getn(words) do
+            if string.find(lowerSubject, words[j], 1, 1) then
+                return kind
+            end
+        end
+    end
+
+    return nil
+end
+
+local function ScanMailbox()
+    EnsureDB()
+
+    if not GetInboxNumItems or not GetInboxHeaderInfo then
+        return
+    end
+
+    local numItems = GetInboxNumItems()
+    if type(numItems) ~= "number" then
+        return
+    end
+
+    local sold = {}
+    local won = {}
+    local returned = {}
+    local senders = {}
+
+    local i
+    for i = 1, numItems do
+        local _, _, sender, subject = GetInboxHeaderInfo(i)
+        local kind = ClassifyAuctionSubject(subject)
+
+        if kind == "sold" then
+            AddEntry(sold, NormalizeSubjectToItem("sold", subject), 1)
+        elseif kind == "won" then
+            AddEntry(won, NormalizeSubjectToItem("won", subject), 1)
+        elseif kind == "returned" then
+            AddEntry(returned, NormalizeSubjectToItem("returned", subject), 1)
+        else
+            if sender and sender ~= "" then
+                local j
+                local found = nil
+                for j = 1, table.getn(senders) do
+                    if senders[j].name == sender then
+                        found = senders[j]
+                        break
+                    end
+                end
+                if found then
+                    found.count = found.count + 1
+                else
+                    table.insert(senders, { name = sender, count = 1 })
+                end
+            end
+        end
+    end
+
+    AuctionCheckDB.sold = sold
+    AuctionCheckDB.won = won
+    AuctionCheckDB.returned = returned
+    AuctionCheckDB.senders = senders
+end
+
+local function ClearAll(reason)
     EnsureDB()
     AuctionCheckDB.sold = {}
+    AuctionCheckDB.won = {}
+    AuctionCheckDB.returned = {}
+    AuctionCheckDB.senders = {}
     if reason then
         Chat(reason)
     end
 end
 
-local function ShowStoredSales()
-    EnsureDB()
-    local sold = AuctionCheckDB.sold
-    local count = table.getn(sold)
-
+local function ShowBucket(title, bucket)
+    local count = table.getn(bucket)
     if count == 0 then
-        Chat("No stored auction sales.")
+        Chat(title .. ": none")
         return
     end
 
+    Chat(title .. ":")
     local i
     for i = 1, count do
-        local entry = sold[i]
-        local text = entry.item or entry.msg or "(unknown sale)"
-        local qty = entry.count or 1
-        Chat(qty .. "x " .. text)
+        local entry = bucket[i]
+        Chat("  " .. (entry.count or 1) .. "x " .. (entry.item or "(unknown)"))
+    end
+end
+
+local function ShowSenders()
+    local senders = AuctionCheckDB.senders
+    local count = table.getn(senders)
+    if count == 0 then
+        Chat("Recent player senders: none")
+        return
+    end
+
+    Chat("Recent player senders:")
+    local i
+    for i = 1, count do
+        local entry = senders[i]
+        Chat("  " .. (entry.count or 1) .. "x " .. (entry.name or "(unknown)"))
+    end
+end
+
+local function ShowStoredData()
+    EnsureDB()
+    ShowBucket("AH Sold", AuctionCheckDB.sold)
+    ShowBucket("AH Won", AuctionCheckDB.won)
+    ShowBucket("AH Returned", AuctionCheckDB.returned)
+    ShowSenders()
+end
+
+local function AddTooltipSection(title, bucket, r, g, b, maxLines)
+    GameTooltip:AddLine(title, r, g, b)
+
+    local count = table.getn(bucket)
+    if count == 0 then
+        GameTooltip:AddLine("None", 0.7, 0.7, 0.7)
+        return 1
+    end
+
+    local shown = 0
+    local i
+    for i = 1, count do
+        local entry = bucket[i]
+        GameTooltip:AddLine((entry.count or 1) .. "x " .. (entry.item or "(unknown)"), 0.9, 0.9, 0.9)
+        shown = shown + 1
+        if shown >= maxLines then
+            break
+        end
+    end
+
+    if count > shown then
+        GameTooltip:AddLine("...", 0.6, 0.6, 0.6)
+    end
+
+    return shown + 1
+end
+
+local function AddSenderSection(maxLines)
+    local senders = AuctionCheckDB.senders
+    GameTooltip:AddLine("Player Senders", 0.8, 0.9, 1)
+
+    local count = table.getn(senders)
+    if count == 0 then
+        GameTooltip:AddLine("None", 0.7, 0.7, 0.7)
+        return
+    end
+
+    local shown = 0
+    local i
+    for i = 1, count do
+        local entry = senders[i]
+        GameTooltip:AddLine((entry.count or 1) .. "x " .. (entry.name or "(unknown)"), 0.9, 0.9, 0.9)
+        shown = shown + 1
+        if shown >= maxLines then
+            break
+        end
+    end
+
+    if count > shown then
+        GameTooltip:AddLine("...", 0.6, 0.6, 0.6)
     end
 end
 
@@ -172,38 +399,14 @@ local function ShowMailTooltip(owner)
         return
     end
 
-    local anchor = "ANCHOR_BOTTOMLEFT"
-
-    GameTooltip:SetOwner(owner, anchor)
+    GameTooltip:SetOwner(owner, "ANCHOR_BOTTOMLEFT")
     GameTooltip:ClearLines()
     GameTooltip:AddLine("AuctionCheck")
 
-    local sold = AuctionCheckDB.sold
-    local count = table.getn(sold)
-
-    if count == 0 then
-        GameTooltip:AddLine("No stored auction sales.", 0.8, 0.8, 0.8)
-        GameTooltip:Show()
-        return
-    end
-
-    local maxLines = 10
-    local startIndex = count - maxLines + 1
-    if startIndex < 1 then
-        startIndex = 1
-    end
-
-    local i
-    for i = startIndex, count do
-        local entry = sold[i]
-        local text = entry.item or entry.msg or "(unknown sale)"
-        local qty = entry.count or 1
-        GameTooltip:AddLine(qty .. "x " .. text, 0.9, 0.9, 0.9, 1)
-    end
-
-    if count > maxLines then
-        GameTooltip:AddLine("(Showing last 10)", 0.7, 0.7, 0.7)
-    end
+    AddTooltipSection("AH Sold", AuctionCheckDB.sold, 1, 0.85, 0.3, 3)
+    AddTooltipSection("AH Won", AuctionCheckDB.won, 0.4, 1, 0.4, 3)
+    AddTooltipSection("AH Returned", AuctionCheckDB.returned, 1, 0.4, 0.4, 3)
+    AddSenderSection(3)
 
     GameTooltip:Show()
 end
@@ -261,19 +464,24 @@ SlashCmdList["AUCTIONCHECK"] = function(msg)
     cmd = string.gsub(cmd, "%s+$", "")
 
     if cmd == "" then
-        ShowStoredSales()
+        ShowStoredData()
     elseif cmd == "clear" then
-        ClearSold("Cleared stored auction sales.")
+        ClearAll("Cleared stored auction and sender data.")
     elseif cmd == "debug" then
-        local fmt = ERR_AUCTION_SOLD_S or "(nil)"
-        local pat = auctionSoldPattern or "(nil)"
-        Chat("ERR_AUCTION_SOLD_S: " .. fmt)
-        Chat("Pattern: " .. pat)
+        local soldFmt = ERR_AUCTION_SOLD_S or "(nil)"
+        local wonFmt = ERR_AUCTION_WON_S or "(nil)"
+        Chat("ERR_AUCTION_SOLD_S: " .. soldFmt)
+        Chat("ERR_AUCTION_WON_S: " .. wonFmt)
+        Chat("AUCTION_WON_MAIL_SUBJECT: " .. (AUCTION_WON_MAIL_SUBJECT or "(nil)"))
+        Chat("AUCTION_EXPIRED_MAIL_SUBJECT: " .. (AUCTION_EXPIRED_MAIL_SUBJECT or "(nil)"))
     elseif cmd == "debugmail" then
         TryHookMailFrame()
         DebugMailTooltipState()
+    elseif cmd == "scan" then
+        ScanMailbox()
+        Chat("Mailbox scan complete.")
     else
-        Chat("Usage: /auctioncheck [clear|debug|debugmail]")
+        Chat("Usage: /auctioncheck [clear|debug|debugmail|scan]")
     end
 end
 SLASH_AUCTIONCHECK1 = "/auctioncheck"
@@ -282,17 +490,25 @@ frame:SetScript("OnEvent", function()
     if event == "ADDON_LOADED" then
         if arg1 == ADDON_NAME then
             EnsureDB()
-            BuildAuctionSoldPattern()
+            BuildPatterns()
             TryHookMailFrame()
         end
     elseif event == "CHAT_MSG_SYSTEM" then
         local msg = arg1
-        local isSold, item = IsAuctionSoldMessage(msg)
+        local isSold, soldItem = IsAuctionSystemMessage("sold", msg)
         if isSold then
-            AddSoldMessage(msg, item)
+            AddEntry(AuctionCheckDB.sold, soldItem or msg, 1)
+            return
+        end
+
+        local isWon, wonItem = IsAuctionSystemMessage("won", msg)
+        if isWon then
+            AddEntry(AuctionCheckDB.won, wonItem or msg, 1)
         end
     elseif event == "MAIL_SHOW" then
-        ClearSold("Mailbox opened - cleared stored auction sales.")
+        ScanMailbox()
+    elseif event == "MAIL_INBOX_UPDATE" then
+        ScanMailbox()
     elseif event == "UPDATE_PENDING_MAIL" then
         TryHookMailFrame()
     end
@@ -301,4 +517,5 @@ end)
 frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("CHAT_MSG_SYSTEM")
 frame:RegisterEvent("MAIL_SHOW")
+frame:RegisterEvent("MAIL_INBOX_UPDATE")
 frame:RegisterEvent("UPDATE_PENDING_MAIL")

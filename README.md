@@ -1,6 +1,6 @@
 # AuctionCheck
 
-Tiny Turtle WoW addon that tracks your auction sold system messages and shows recent sales on the minimap mail icon tooltip.
+Tiny Turtle WoW addon that tracks auction/mail activity and shows recent entries on the minimap mail icon tooltip.
 
 ![Unread Mail Shows AH Sales](addonScreenShot.png)
 
@@ -10,4 +10,6 @@ Tiny Turtle WoW addon that tracks your auction sold system messages and shows re
 3. Reload UI or relog.
 
 ## Command
-- `/auctioncheck` — print stored sale entries to chat.
+- `/auctioncheck` — print stored AH sold/won/returned and player sender entries.
+- `/auctioncheck scan` — rescan current mailbox headers.
+- `/auctioncheck clear` — clear stored data.
